@@ -5,6 +5,34 @@
 #include <ArduinoJson.h>
 #include <string>
 
+// =============================================================
+//  NetData 服务配置 — 在这里集中改你的路由器设置
+// =============================================================
+#define NETDATA_HOST      "10.0.0.1"   // 软路由 IP
+#define NETDATA_PORT      19999         // NetData 端口,默认 19999
+
+// API 路径:
+//   v1.x(本项目默认,NetData v1.0 ~ v1.45):  /api/v1/data
+//   v2.x(2024+ Go 重写版):                   /api/v2/data
+#define NETDATA_API_PATH  "/api/v1/data"
+
+// =============================================================
+//  chart id 配置 — 根据你的路由器上实际 chart 名调整
+//  查询方式: curl http://10.0.0.1:19999/api/v1/charts | python3 -m json.tool | grep chart_id
+// =============================================================
+#define CHART_CPU         "system.cpu"        // CPU 占用率
+#define CHART_MEMORY      "mem.available"     // 剩余内存
+#define CHART_NET         "net.eth0"          // 网卡名,可能是 br-lan / pppoe-wan / eth0 / br-lan 等
+#define DIM_NET_RECV      "received"
+#define DIM_NET_SENT      "sent"
+
+// 温度:由路由器侧 python.d 插件推送
+// 路由器脚本路径 /etc/netdata/python.d/thermal.chart.py,见 README
+#define CHART_TEMP        "thermal.cpu"
+
+// 总内存(MB),用于 mem.available 换算为使用率,根据路由器实际内存改
+#define TOTAL_MEM_MB      1024.0
+
 class NetChartData
 {
 public:
@@ -36,12 +64,9 @@ public:
 
 void parseNetDataResponse(WiFiClient &client, NetChartData &data)
 {
-    // Stream& input;
-
     DynamicJsonDocument doc(4096);
 
     DeserializationError error = deserializeJson(doc, client);
-
     if (error)
     {
         Serial.print(F("deserializeJson() failed: "));
@@ -49,75 +74,89 @@ void parseNetDataResponse(WiFiClient &client, NetChartData &data)
         return;
     }
 
-    data.api = doc["api"]; // 1
+    data.api = doc["api"];
     data.id = doc["id"].as<String>();
     data.name = doc["name"].as<String>();
-    data.view_update_every = doc["view_update_every"]; // 1
-    data.update_every = doc["update_every"];           // 1
-    data.first_entry = doc["first_entry"];             // 1691505357
-    data.last_entry = doc["last_entry"];               // 1691505905
-    data.after = doc["after"];                         // 1691505903
-    data.before = doc["before"];                       // 1691505904
-    data.group = doc["group"].as<String>();            // "average"
+    data.view_update_every = doc["view_update_every"];
+    data.update_every = doc["update_every"];
+    data.first_entry = doc["first_entry"];
+    data.last_entry = doc["last_entry"];
+    data.after = doc["after"];
+    data.before = doc["before"];
+    data.group = doc["group"].as<String>();
 
-    data.options_0 = doc["options"][0].as<String>(); // "jsonwrap"
-    data.options_1 = doc["options"][1].as<String>(); // "natural-points"
+    data.options_0 = doc["options"][0].as<String>();
+    data.options_1 = doc["options"][1].as<String>();
 
     data.dimension_names = doc["dimension_names"];
     data.dimension_ids = doc["dimension_ids"];
     data.latest_values = doc["latest_values"];
     data.view_latest_values = doc["view_latest_values"];
 
-    data.dimensions = doc["dimensions"];      // 3
-    data.points = doc["points"];              // 2
-    data.format = doc["format"].as<String>(); // "array"
+    data.dimensions = doc["dimensions"];
+    data.points = doc["points"];
+    data.format = doc["format"].as<String>();
 
     JsonArray db_points_per_tier = doc["db_points_per_tier"];
     data.result = doc["result"];
-    data.min = doc["min"]; // 2.1594684
-    data.max = doc["max"]; // 3.7468776
+    data.min = doc["min"];
+    data.max = doc["max"];
 }
-
-/**
- * 从软路由NetData获取监控信息
- * ChartID:
- *  system.cpu - CPU占用率信息
- *  sensors.temp_thermal_zone0_thermal_thermal_zone - CPU 温度信息
- */
 
 bool getNetDataInfoWithDimension(String chartID, NetChartData &data, String dimensions_filter)
 {
-    const char *NETDATA_HOST = "192.168.100.1";
-    int NETDATA_PORT = 19999;
-    // String reqRes = "/api/v0/data?chart=sensors.temp_thermal_zone0_thermal_thermal_zone0&format=json&points=9&group=average&gtime=0&options=s%7Cjsonwrap%7Cnonzero&after=-10";
-    String reqRes = "/api/v1/data?chart=" + chartID + "&format=json&points=1&group=average&gtime=0&options=s%7Cjsonwrap%7Cnonzero&after=-2";
-    reqRes = reqRes + "&dimensions=" + dimensions_filter;
+    String reqRes = String(NETDATA_API_PATH) + String(F("?chart=")) + chartID +
+                    String(F("&format=json&points=1&group=average&gtime=0")) +
+                    String(F("&options=s%7Cjsonwrap%7Cnonzero&after=-2"));
+    if (dimensions_filter.length() > 0)
+    {
+        reqRes = reqRes + String(F("&dimensions=")) + dimensions_filter;
+    }
 
     WiFiClient client;
     bool ret = false;
 
-    // 建立http请求信息
-    String httpRequest = String("GET ") + reqRes + " HTTP/0.1\r\n" + "Host: " + NETDATA_HOST + "\r\n" + "Connection: close\r\n\r\n";
+    String httpRequest = String("GET ") + reqRes + " HTTP/0.1\r\n" +
+                         "Host: " + String(NETDATA_HOST) + "\r\n" +
+                         "Connection: close\r\n\r\n";
 
-    // 尝试连接服务器
     if (client.connect(NETDATA_HOST, NETDATA_PORT))
     {
-        // 向服务器发送http请求信息
         client.print(httpRequest);
         Serial.println("Sending request: ");
         Serial.println(httpRequest);
 
-        // 获取并显示服务器响应状态行
         String status_response = client.readStringUntil('\n');
         Serial.print("status_response: ");
         Serial.println(status_response);
-        // 使用find跳过HTTP响应头
         if (client.find("\r\n\r\n"))
         {
             Serial.println("Found Header End. Start Parsing.");
         }
 
-        // 利用ArduinoJson库解析NetData返回的信息
+        // 探测 body 是不是 JSON。
+        // NetData v1.x 在 chart 不存在时返回纯文本 "Chart is not found: ..." 或
+        // "No data: ...",v2.x 返回 JSON {"error": ...};这里只挑 JSON 解析。
+        char peek = client.peek();
+        // 跳过 body 开头的空白字符
+        while (peek == ' ' || peek == '\r' || peek == '\n' || peek == '\t' || peek == '\0')
+        {
+            if (!client.available())
+            {
+                break;
+            }
+            client.read();
+            peek = client.peek();
+        }
+        if (peek != '{')
+        {
+            String body = client.readString();
+            Serial.print(F("Non-JSON response (chart missing?): "));
+            Serial.println(body);
+            client.stop();
+            return false;
+        }
+
         parseNetDataResponse(client, data);
         ret = true;
     }
@@ -125,7 +164,6 @@ bool getNetDataInfoWithDimension(String chartID, NetChartData &data, String dime
     {
         Serial.println(" connection failed!");
     }
-    // 断开客户端与服务器连接工作
     client.stop();
     return ret;
 }

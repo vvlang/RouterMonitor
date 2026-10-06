@@ -7,9 +7,9 @@
 
 using namespace std;
 
-const char *ssid = "HWCTQ";         // 连接WiFi名（此处使用taichi-maker为示例）
-                                    // 请将您需要连接的WiFi名填入引号中
-const char *password = "qazxsw123"; // 连接WiFi密码（此处使用12345678为示例）
+// ===== 在这里改你的 WiFi 配置 =====
+const char *ssid = "HWCTQ";         // ← 改成你的 WiFi 名
+const char *password = "qazxsw123"; // ← 改成你的 WiFi 密码
 
 // extern lv_font_t my_font_name;
 LV_FONT_DECLARE(tencent_w7_22)
@@ -163,7 +163,7 @@ bool read_encoder(lv_indev_drv_t *indev, lv_indev_data_t *data)
 
 void getCPUUsage()
 {
-    if (getNetDataInfo("system.cpu", netChartData))
+    if (getNetDataInfo(CHART_CPU, netChartData))
     {
         Serial.print("CPU Usage: ");
         Serial.println(String(netChartData.max).c_str());
@@ -174,12 +174,15 @@ void getCPUUsage()
 
 void getMemoryUsage()
 {
-    if (getNetDataInfo("mem.available", netChartData))
+    if (getNetDataInfo(CHART_MEMORY, netChartData))
     {
         Serial.print("Memory Available: ");
         Serial.println(String(netChartData.max).c_str());
 
-        mem_usage = 100 * (1.0 - netChartData.max / 1024.0);
+        // mem.available 返回单位 MiB,使用率 = (总 - 剩余) / 总 * 100
+        mem_usage = 100.0 * (1.0 - netChartData.max / TOTAL_MEM_MB);
+        if (mem_usage < 0) mem_usage = 0;
+        if (mem_usage > 100) mem_usage = 100;
     }
 }
 
@@ -214,7 +217,7 @@ lv_coord_t updateNetSeries(lv_coord_t *series, double speed)
 
 void getNetworkReceived()
 {
-    if (getNetDataInfoWithDimension("net.eth0", netChartData, "received"))
+    if (getNetDataInfoWithDimension(CHART_NET, netChartData, DIM_NET_RECV))
     {
         Serial.print("Received: ");
         Serial.println(String(netChartData.max).c_str());
@@ -227,7 +230,7 @@ void getNetworkReceived()
 
 void getNetworkSent()
 {
-    if (getNetDataInfoWithDimension("net.eth0", netChartData, "sent"))
+    if (getNetDataInfoWithDimension(CHART_NET, netChartData, DIM_NET_SENT))
     {
         Serial.print("Sent: ");
         Serial.println(String(netChartData.min).c_str());
@@ -240,12 +243,17 @@ void getNetworkSent()
 
 void getTemperature()
 {
-    if (getNetDataInfo("sensors.temp_thermal_zone0_thermal_thermal_zone0", netChartData))
+    // 温度 chart 由路由器侧 python.d 插件 /etc/netdata/python.d/thermal.chart.py 推送
+    if (getNetDataInfo(CHART_TEMP, netChartData))
     {
         Serial.print("Temperature: ");
         Serial.println(String(netChartData.max).c_str());
 
-        temp_value = netChartData.max;
+        // 合理性校验:合法范围 -50 ~ 150℃,异常值丢弃保持上次
+        if (netChartData.max > -50.0 && netChartData.max < 150.0)
+        {
+            temp_value = netChartData.max;
+        }
     }
 }
 
