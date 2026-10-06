@@ -26,12 +26,14 @@
 #define DIM_NET_RECV      "received"
 #define DIM_NET_SENT      "sent"
 
-// 温度:由路由器侧 python.d 插件推送
-// 路由器脚本路径 /etc/netdata/python.d/thermal.chart.py,见 README
-#define CHART_TEMP        "thermal.cpu"
+// 温度:由路由器侧通过 NetData statsd 推送(无需 Python)
+// 路由器侧推送格式:echo "thermal_cpu:XX.XX|g" | nc -u 127.0.0.1 8125
+// NetData 自动注册 chart id 为 statsd.thermal_cpu
+#define CHART_TEMP        "statsd_gauge_thermal_cpu.gauge"
 
 // 总内存(MB),用于 mem.available 换算为使用率,根据路由器实际内存改
-#define TOTAL_MEM_MB      1024.0
+// iStoreOS 24.10.8 路由器:4GB RAM = 4096 MiB
+#define TOTAL_MEM_MB      4096.0
 
 class NetChartData
 {
