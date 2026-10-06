@@ -48,26 +48,31 @@ echo ""
 echo "=== [3/5] 写入 thermal.chart.py 插件 ==="
 cat > "${NETDATA_PYDIR}/thermal.chart.py" <<'PYEOF'
 # -*- coding: utf-8 -*-
+# NetData python.d 插件 — 读取 /sys/class/thermal/thermal_zone0/temp
+# 关键点:NetData python.d 加载器**强制要求类名是 Service,不是 Order/Chart 等其他名字
 from bases.FrameworkServices.SimpleService import SimpleService
 
 UPDATE_EVERY = 5
+ORDER = ['cpu']
+CHARTS = {
+    'cpu': {
+        'options': [None, 'CPU Temperature', 'celsius',
+                    'CPU temperature', 'cpu', 'line'],
+        'lines': [
+            ['cpu', None, 'absolute'],
+        ],
+    },
+}
 
 
-class Thermal(SimpleService):
+class Service(SimpleService):
     def __init__(self, configuration=None, name=None):
         SimpleService.__init__(self, configuration=configuration, name=name)
-        self.order = ['cpu']
-        self.definitions = {
-            'cpu': {
-                'options': [None, 'CPU Temperature', 'celsius',
-                            'CPU temperature', 'thermal.cpu', 'line'],
-                'lines': [
-                    ['cpu', None, 'absolute'],
-                ],
-            },
-        }
+        self.order = ORDER
+        self.definitions = CHARTS
 
-    def check(self):
+    @staticmethod
+    def check():
         try:
             with open('/sys/class/thermal/thermal_zone0/temp') as f:
                 f.read()
